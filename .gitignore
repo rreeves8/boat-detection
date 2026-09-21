@@ -1,0 +1,23 @@
+# Secrets / credentials
+.env
+**/.env
+.cloudflare.env
+
+# Captured login traffic (contains credentials in plaintext)
+*.har
+
+# Node / Cloudflare Workers
+node_modules/
+.wrangler/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Scraper output
+videos/
+.DS_Store
+infra/.terraform.lock.hcl
+weights/clip/ViT-B-32.pt

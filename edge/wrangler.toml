@@ -1,0 +1,14 @@
+name = "boat-gate"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# Reached only via the custom domain (Terraform), not a workers.dev subdomain.
+workers_dev = false
+
+# The hostname binding (login.magnusreeves.com) is owned by Terraform
+# (cloudflare_workers_domain.login); this file only publishes the script.
+
+# Secrets (set out of band, never in this file or Terraform state):
+#   wrangler secret put SHARED_PASSWORD   # the access passphrase
+#   wrangler secret put CDN_KEY_NAME      # the Cloud CDN signed-URL key name ("gate-key")
+#   wrangler secret put CDN_KEY_VALUE     # the base64url signing key (same value TF gets)

@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Muskoka boat traffic</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, system-ui, sans-serif;
+        background: #101315;
+        color: #edf1ee;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        line-height: 1.5;
+      }
+      a {
+        color: #b7e0c7;
+      }
+      .wrap {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+      header {
+        padding: 72px 0 40px;
+        border-bottom: 1px solid #232b27;
+      }
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 2px;
+        color: #a3c9b4;
+        text-transform: uppercase;
+      }
+      .eyebrow-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+      }
+      h1 {
+        margin: 12px 0 16px;
+        font-size: 46px;
+        font-weight: 500;
+        letter-spacing: -1.5px;
+        line-height: 1.05;
+      }
+      .cta {
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+        background: #b7e0c7;
+        color: #15291d;
+        border-radius: 6px;
+        padding: 12px 18px;
+        font-weight: 600;
+        text-decoration: none;
+      }
+      .cta:hover {
+        background: #c8ecd5;
+      }
+      section {
+        padding: 44px 0;
+        border-bottom: 1px solid #1c2320;
+      }
+      h2 {
+        font-size: 13px;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        color: #87978c;
+        font-weight: 600;
+        margin: 0 0 22px;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 14px;
+        margin-bottom: 26px;
+      }
+      .stat {
+        background: #171d1a;
+        border: 1px solid #262f29;
+        border-radius: 10px;
+        padding: 18px 20px;
+      }
+      .stat .value {
+        font-size: 30px;
+        font-weight: 500;
+        letter-spacing: -1px;
+        color: #edf1ee;
+      }
+      .stat .label {
+        font-size: 12px;
+        color: #87978c;
+        margin-top: 4px;
+      }
+      .charts {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: 16px;
+      }
+      .chart-card {
+        background: #171d1a;
+        border: 1px solid #262f29;
+        border-radius: 10px;
+        padding: 18px 20px 20px;
+      }
+      .chart-card h3 {
+        margin: 0 0 4px;
+        font-size: 15px;
+        font-weight: 500;
+      }
+      .chart-card .sub {
+        margin: 0 0 14px;
+        font-size: 12px;
+        color: #87978c;
+      }
+      .chart-holder {
+        position: relative;
+        height: 240px;
+      }
+      .wide {
+        grid-column: 1 / -1;
+      }
+      .note {
+        color: #97a29b;
+        font-size: 13px;
+      }
+      @media (max-width: 640px) {
+        h1 {
+          font-size: 34px;
+        }
+        header {
+          padding: 48px 0 32px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="eyebrow-row">
+          <span class="eyebrow">Stills Bay · Lake Joseph · Ontario</span>
+          <a class="cta" href="https://login.magnusreeves.com/">Browse the footage &rarr;</a>
+        </div>
+      </header>
+
+      <section>
+        <div id="stats" class="stats"></div>
+        <div id="charts" class="charts">
+          <p id="empty-note" class="note">Loading analysis&hellip;</p>
+        </div>
+      </section>
+
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <script>
+      const TIMEZONE = "America/Toronto";
+      // Same-origin: served by the Cloudflare Worker in production, or by the
+      // ui/records.jsonl symlink when serving ui/ locally.
+      const RECORDS_URL = "/records.jsonl";
+
+      const GREEN = "#8fe6ab";
+      const AMBER = "#e6c98f";
+      const MUTED = "#6a746e";
+      const BLUE = "#7fb0e0";
+
+      const tzParts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: TIMEZONE,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        hour12: false,
+      });
+
+      // Filenames are YYYY-MM-DD_HH-MM-SS_<id>.mp4, recorded in UTC.
+      function stampFromName(name) {
+        const base = name.split("/").pop();
+        if (!/^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}/.test(base)) return null;
+        const iso =
+          base.slice(0, 19).replace("_", "T").replace(/-(\d{2})-(\d{2})$/, ":$1:$2") +
+          "Z";
+        const date = new Date(iso);
+        return Number.isNaN(date.getTime()) ? null : date;
+      }
+
+      function localParts(date) {
+        const parts = Object.fromEntries(
+          tzParts.formatToParts(date).map((p) => [p.type, p.value]),
+        );
+        return {
+          day: `${parts.year}-${parts.month}-${parts.day}`,
+          hour: Number(parts.hour) % 24,
+        };
+      }
+
+      async function loadRecords() {
+        const response = await fetch(RECORDS_URL, { cache: "no-store" });
+        if (!response.ok) throw new Error("no records");
+        const text = await response.text();
+        const records = [];
+        for (const line of text.split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            records.push(JSON.parse(line));
+          } catch (_) {}
+        }
+        return records;
+      }
+
+      function aggregate(records) {
+        const perDay = new Map(); // day -> boat passes
+        const perHour = Array(24).fill(0);
+        const direction = { "L->R": 0, "R->L": 0, ambiguous: 0 };
+        const classes = { boat: 0, wake_only: 0, empty: 0 };
+        let passes = 0;
+        let boatClips = 0;
+        let analyzed = 0;
+
+        for (const record of records) {
+          if (!record || !record.name) continue;
+          const date = stampFromName(record.name);
+          if (!date) continue;
+          analyzed++;
+          const { day, hour } = localParts(date);
+
+          if (record.class in classes) classes[record.class]++;
+          const boats = record.boats || [];
+          if (boats.length) boatClips++;
+
+          perDay.set(day, (perDay.get(day) || 0) + boats.length);
+          for (const boat of boats) {
+            passes++;
+            perHour[hour]++;
+            if (boat.direction in direction) direction[boat.direction]++;
+            else direction.ambiguous++;
+          }
+        }
+
+        const days = [...perDay.keys()].sort();
+        let busiest = null;
+        for (const [day, count] of perDay) {
+          if (!busiest || count > busiest.count) busiest = { day, count };
+        }
+
+        return {
+          days,
+          perDay,
+          perHour,
+          direction,
+          classes,
+          passes,
+          boatClips,
+          analyzed,
+          busiest,
+          dayCount: days.length,
+        };
+      }
+
+      function renderStats(data) {
+        const el = document.querySelector("#stats");
+        const avg = data.dayCount ? data.passes / data.dayCount : 0;
+        const busiestLabel = data.busiest
+          ? new Intl.DateTimeFormat("en-US", {
+              month: "short",
+              day: "numeric",
+              timeZone: "UTC",
+            }).format(new Date(data.busiest.day + "T12:00:00Z"))
+          : "—";
+        const cards = [
+          [data.passes.toLocaleString(), "boat passes"],
+          [avg ? avg.toFixed(1) : "—", "avg passes / day"],
+          [
+            data.busiest ? `${busiestLabel}` : "—",
+            data.busiest ? `busiest day · ${data.busiest.count} passes` : "busiest day",
+          ],
+        ];
+        el.innerHTML = cards
+          .map(
+            ([value, label]) =>
+              `<div class="stat"><div class="value">${value}</div><div class="label">${label}</div></div>`,
+          )
+          .join("");
+      }
+
+      function chartCard(id, title, sub, wide) {
+        const card = document.createElement("div");
+        card.className = "chart-card" + (wide ? " wide" : "");
+        card.innerHTML = `<h3>${title}</h3><p class="sub">${sub}</p><div class="chart-holder"><canvas id="${id}"></canvas></div>`;
+        return card;
+      }
+
+      function renderCharts(data) {
+        const host = document.querySelector("#charts");
+        host.replaceChildren();
+
+        Chart.defaults.color = "#9aa6a0";
+        Chart.defaults.borderColor = "#232b27";
+        Chart.defaults.font.family = "Inter, system-ui, sans-serif";
+        const noLegend = { plugins: { legend: { display: false } } };
+        const gridY = {
+          scales: {
+            y: { beginAtZero: true, grid: { color: "#1e2521" } },
+            x: { grid: { display: false } },
+          },
+        };
+
+        // Boats per day
+        host.append(chartCard("byDay", "Boats per day", "Passes detected each day", true));
+        new Chart(document.getElementById("byDay"), {
+          type: "bar",
+          data: {
+            labels: data.days.map((d) =>
+              new Intl.DateTimeFormat("en-US", {
+                month: "short",
+                day: "numeric",
+                timeZone: "UTC",
+              }).format(new Date(d + "T12:00:00Z")),
+            ),
+            datasets: [
+              { data: data.days.map((d) => data.perDay.get(d)), backgroundColor: GREEN, borderRadius: 4 },
+            ],
+          },
+          options: { ...noLegend, ...gridY, maintainAspectRatio: false },
+        });
+
+        // By hour of day
+        host.append(chartCard("byHour", "Activity by hour", "When the channel is busiest (local time)"));
+        new Chart(document.getElementById("byHour"), {
+          type: "bar",
+          data: {
+            labels: [...Array(24).keys()].map((h) => `${h}`),
+            datasets: [{ data: data.perHour, backgroundColor: GREEN, borderRadius: 3 }],
+          },
+          options: { ...noLegend, ...gridY, maintainAspectRatio: false },
+        });
+
+        // Direction split
+        host.append(chartCard("byDir", "Direction of travel", "Which way boats pass"));
+        new Chart(document.getElementById("byDir"), {
+          type: "doughnut",
+          data: {
+            labels: ["Left → right", "Right → left", "Ambiguous"],
+            datasets: [
+              {
+                data: [data.direction["L->R"], data.direction["R->L"], data.direction.ambiguous],
+                backgroundColor: [GREEN, BLUE, MUTED],
+                borderColor: "#171d1a",
+                borderWidth: 2,
+              },
+            ],
+          },
+          options: {
+            maintainAspectRatio: false,
+            cutout: "58%",
+            plugins: { legend: { position: "bottom" } },
+          },
+        });
+
+        // Clip class breakdown
+        host.append(chartCard("byClass", "Clip breakdown", "How much footage is real traffic"));
+        new Chart(document.getElementById("byClass"), {
+          type: "doughnut",
+          data: {
+            labels: ["Boat", "Wake only", "Empty"],
+            datasets: [
+              {
+                data: [data.classes.boat, data.classes.wake_only, data.classes.empty],
+                backgroundColor: [GREEN, AMBER, MUTED],
+                borderColor: "#171d1a",
+                borderWidth: 2,
+              },
+            ],
+          },
+          options: {
+            maintainAspectRatio: false,
+            cutout: "58%",
+            plugins: { legend: { position: "bottom" } },
+          },
+        });
+      }
+
+      (async function () {
+        try {
+          const records = await loadRecords();
+          const data = aggregate(records);
+          if (!data.analyzed) throw new Error("empty");
+          renderStats(data);
+          renderCharts(data);
+        } catch (_) {
+          document.querySelector("#stats").innerHTML = "";
+          document.querySelector("#charts").innerHTML =
+            '<p class="note">No analysis records yet. Once clips are analyzed into ' +
+            "<code>records.jsonl</code>, the charts appear here automatically. " +
+            'Meanwhile, you can <a href="data/">browse the raw footage &rarr;</a></p>';
+        }
+      })();
+    </script>
+  </body>
+</html>

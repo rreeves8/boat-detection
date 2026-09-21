@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Footage / daily view</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, system-ui, sans-serif;
+        background: #101315;
+        color: #edf1ee;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      header {
+        padding: 30px 32px 24px;
+        border-bottom: 1px solid #303837;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 24px;
+      }
+      h1 {
+        margin: 8px 0;
+        font-size: 30px;
+        font-weight: 500;
+        letter-spacing: -1px;
+      }
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 2px;
+        color: #a3c9b4;
+        text-transform: uppercase;
+      }
+      p {
+        color: #a0aaa4;
+        font-size: 13px;
+      }
+      button {
+        background: #b7e0c7;
+        border: 0;
+        border-radius: 5px;
+        padding: 11px 17px;
+        cursor: pointer;
+        font-weight: 600;
+        color: #15291d;
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      .toolbar {
+        display: flex;
+        gap: 8px;
+      }
+      .date-jump {
+        margin-left: auto;
+      }
+      .secondary {
+        background: #27332c;
+        color: #d7e5db;
+      }
+      main {
+        padding: 12px 32px 40px;
+      }
+      .day {
+        margin-top: 28px;
+      }
+      .day-heading {
+        display: flex;
+        gap: 14px;
+        align-items: baseline;
+        border-bottom: 1px solid #303837;
+        margin-bottom: 14px;
+        padding-bottom: 12px;
+      }
+      .day h2 {
+        font-size: 18px;
+        font-weight: 500;
+        margin: 0;
+      }
+      .count {
+        font-size: 12px;
+        color: #87978c;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 14px;
+      }
+      figure {
+        margin: 0;
+        min-width: 0;
+        background: #1b211e;
+        border: 1px solid #303b34;
+        border-radius: 6px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+      video {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16/9;
+        background: #080b09;
+        object-fit: cover;
+      }
+      figcaption {
+        padding: 10px 10px 6px;
+        font-size: 12px;
+        color: #bccbc1;
+      }
+      .caption-main {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .analysis {
+        padding: 0 10px 12px;
+        font-size: 11px;
+        border-top: 1px solid #263029;
+        margin-top: 4px;
+        padding-top: 10px;
+      }
+      .badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+      }
+      .badge.boat {
+        background: #1f3d2a;
+        color: #8fe6ab;
+      }
+      .badge.wake_only {
+        background: #3d3320;
+        color: #e6c98f;
+      }
+      .badge.empty {
+        background: #2a2f2c;
+        color: #8a938d;
+      }
+      .badge.pending {
+        background: #242a27;
+        color: #6a746e;
+      }
+      .badge.output {
+        background: #1f2d3d;
+        color: #8fbfe6;
+        cursor: pointer;
+      }
+      .badge.output:hover {
+        background: #294056;
+      }
+      .video-wrap {
+        position: relative;
+        line-height: 0;
+      }
+      .overlay {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        display: none;
+      }
+      .boat-line {
+        color: #cfe0d5;
+        margin-top: 7px;
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+      }
+      .dir {
+        font-weight: 600;
+        font-size: 13px;
+        color: #b7e0c7;
+      }
+      .meta {
+        color: #8a978e;
+      }
+      .analysis-note {
+        margin-top: 7px;
+        color: #8a978e;
+      }
+      .message {
+        padding: 48px 0;
+        color: #a0aaa4;
+      }
+      #status {
+        min-height: 20px;
+      }
+      @media (max-width: 700px) {
+        header {
+          padding: 22px 16px;
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        main {
+          padding: 0 16px 30px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <div class="eyebrow">
+          <a href="../" style="color: inherit; text-decoration: none">&larr; Overview</a>
+          &nbsp;·&nbsp; Footage archive
+        </div>
+        <h1>Footage by day.</h1>
+        <p id="summary">Connecting to your footage…</p>
+        <p id="status" role="status" aria-live="polite">Loading videos…</p>
+      </div>
+    </header>
+    <nav
+      class="toolbar"
+      aria-label="Video pages"
+      style="padding: 20px 32px; align-items: center"
+    >
+      <button id="previous" class="secondary" disabled>Next day</button
+      ><span id="page-label">Page 1</span
+      ><button id="next" class="secondary" disabled>Previous day</button
+      ><input id="date-jump" class="date-jump" type="date" aria-label="Jump to date" />
+    </nav>
+    <main id="gallery"><div class="message">Loading the archive…</div></main>
+    <script>
+      const gallery = document.querySelector("#gallery");
+      const status = document.querySelector("#status");
+      const previous = document.querySelector("#previous");
+      const next = document.querySelector("#next");
+      const dateJump = document.querySelector("#date-jump");
+      let currentDay = new Date();
+      currentDay.setDate(currentDay.getDate() - 1);
+      const dayString = (date) => {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const day = String(date.getDate()).padStart(2, "0");
+        return `${year}-${month}-${day}`;
+      };
+      const displayDay = (day) => new Intl.DateTimeFormat("en-US", {
+        dateStyle: "full",
+        timeZone: TIMEZONE,
+      }).format(new Date(`${day}T12:00:00`));
+      const TIMEZONE = "America/Toronto";
+      const MUSKOKA_LATITUDE = 45.0;
+      const MUSKOKA_LONGITUDE = -79.5;
+      // Same-origin object paths in both environments: Cloud CDN serves them in
+      // production (gated by the signed cookie); serve.py proxies them from the
+      // private bucket with your gcloud credentials when running locally.
+      const RECORDS_URL = "/records.jsonl";
+      let analysisByName = new Map();
+
+      function daylightWindow(day) {
+        const [year, month, date] = day.split("-").map(Number);
+        const dayOfYear = Math.floor(
+          (Date.UTC(year, month - 1, date) - Date.UTC(year, 0, 0)) / 86400000,
+        );
+        const radians = (value) => (value * Math.PI) / 180;
+        const degrees = (value) => (value * 180) / Math.PI;
+        const solarTime = (hour, sunrise) => {
+          const longitudeHour = MUSKOKA_LONGITUDE / 15;
+          const t = dayOfYear + (hour - longitudeHour) / 24;
+          const meanAnomaly = 0.9856 * t - 3.289;
+          let longitude =
+            meanAnomaly +
+            1.916 * Math.sin(radians(meanAnomaly)) +
+            0.02 * Math.sin(radians(2 * meanAnomaly)) +
+            282.634;
+          longitude = (longitude + 360) % 360;
+          let rightAscension = degrees(
+            Math.atan(0.91764 * Math.tan(radians(longitude))),
+          );
+          rightAscension = (rightAscension + 360) % 360;
+          rightAscension +=
+            (Math.floor(longitude / 90) - Math.floor(rightAscension / 90)) * 90;
+          rightAscension /= 15;
+          const sinDeclination = 0.39782 * Math.sin(radians(longitude));
+          const cosDeclination = Math.cos(Math.asin(sinDeclination));
+          const cosineHourAngle =
+            (Math.cos(radians(90.833)) -
+              sinDeclination * Math.sin(radians(MUSKOKA_LATITUDE))) /
+            (cosDeclination * Math.cos(radians(MUSKOKA_LATITUDE)));
+          if (cosineHourAngle > 1 || cosineHourAngle < -1) return null;
+          let hourAngle = degrees(Math.acos(cosineHourAngle));
+          if (sunrise) hourAngle = 360 - hourAngle;
+          hourAngle /= 15;
+          const localMeanTime =
+            hourAngle + rightAscension - 0.06571 * t - 6.622;
+          // Keep values at or above 24 hours: sunset can fall on the next UTC date.
+          let utcHour = localMeanTime - longitudeHour;
+          if (sunrise && utcHour < 0) utcHour += 24;
+          if (!sunrise && utcHour < 12) utcHour += 24;
+          return new Date(Date.UTC(year, month - 1, date) + utcHour * 3600000);
+        };
+        return { sunrise: solarTime(6, true), sunset: solarTime(18, false) };
+      }
+      let players = [];
+      previous.addEventListener("click", () => { currentDay.setDate(currentDay.getDate() + 1); load(); });
+      next.addEventListener("click", () => { currentDay.setDate(currentDay.getDate() - 1); load(); });
+      dateJump.addEventListener("change", () => {
+        if (!dateJump.value) return;
+        const [year, month, day] = dateJump.value.split("-").map(Number);
+        currentDay = new Date(year, month - 1, day);
+        load();
+      });
+      const formatDuration = (milliseconds) => {
+        if (!milliseconds) return "Unknown duration";
+        const totalSeconds = Math.round(milliseconds / 1000);
+        return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
+      };
+      const DIRECTION_ARROW = { "L->R": "→", "R->L": "←", ambiguous: "•" };
+
+      async function loadAnalysis() {
+        // Fetched once and reused across days; missing file just means nothing
+        // has been analyzed yet, so every clip renders as "pending".
+        if (analysisByName.size) return;
+        try {
+          const response = await fetch(RECORDS_URL, { cache: "no-store" });
+          if (!response.ok) return;
+          const text = await response.text();
+          for (const line of text.split("\n")) {
+            if (!line.trim()) continue;
+            const record = JSON.parse(line);
+            if (record.name) analysisByName.set(record.name, record);
+          }
+        } catch (_) {
+          // Leave the map empty; cards fall back to the pending state.
+        }
+      }
+
+      function renderAnalysis(record) {
+        const wrap = document.createElement("div");
+        wrap.className = "analysis";
+        if (!record) {
+          const badge = document.createElement("span");
+          badge.className = "badge pending";
+          badge.textContent = "Not analyzed";
+          wrap.append(badge);
+          return wrap;
+        }
+        // We only detect motion right now -- we don't classify the object -- so
+        // don't invent a label. Show a plain "output" tag; hover it to read the
+        // entire raw record the detector produced for this clip.
+        const tag = document.createElement("span");
+        tag.className = "badge output";
+        tag.textContent = "output";
+        tag.title = JSON.stringify(record, null, 2);
+        wrap.append(tag);
+        return wrap;
+      }
+
+      // Draw each object's tracked box onto a canvas over the video, synced to
+      // playback, so clicking "output" replays what the detector found moving.
+      function makeOverlay(video, canvas, record) {
+        const ctx = canvas.getContext("2d");
+        const fps = record.fps || 15;
+        const objects = record.objects || record.boats || [];
+        let raf = 0;
+        function draw() {
+          const w = video.clientWidth;
+          const h = video.clientHeight;
+          if (canvas.width !== w) canvas.width = w;
+          if (canvas.height !== h) canvas.height = h;
+          ctx.clearRect(0, 0, w, h);
+          const frame = video.currentTime * fps;
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = "#8fe6ab";
+          ctx.fillStyle = "#8fe6ab";
+          ctx.font = "600 12px Inter, system-ui, sans-serif";
+          for (const obj of objects) {
+            const path = obj.track;
+            if (!path || !path.length) continue;
+            // Nearest tracked sample to the current instant; skip if the object
+            // wasn't detected around now (so no stale box lingers).
+            let best = null;
+            let bestGap = Infinity;
+            for (const s of path) {
+              const gap = Math.abs(s[0] - frame);
+              if (gap < bestGap) { bestGap = gap; best = s; }
+            }
+            if (!best || bestGap > 6) continue;
+            const x = best[1] * w;
+            const y = best[2] * h;
+            ctx.strokeRect(x, y, best[3] * w, best[4] * h);
+            if (obj.direction) ctx.fillText(obj.direction, x, Math.max(12, y - 4));
+          }
+        }
+        function loop() {
+          draw();
+          if (!video.paused && !video.ended) raf = requestAnimationFrame(loop);
+        }
+        video.addEventListener("play", () => {
+          canvas.style.display = "block";
+          cancelAnimationFrame(raf);
+          loop();
+        });
+        video.addEventListener("pause", draw);
+        video.addEventListener("seeked", () => {
+          if (canvas.style.display === "block") draw();
+        });
+        video.addEventListener("ended", draw);
+        return {
+          start() {
+            canvas.style.display = "block";
+            video.currentTime = 0;
+            video.play();
+          },
+        };
+      }
+
+      async function publicCatalog(day) {
+        // Cloud CDN has no listing endpoint, so the day's clips are always
+        // derived from records.jsonl (every record carries its clip name).
+        await loadAnalysis();
+        const names = [...analysisByName.keys()];
+        const formatter = new Intl.DateTimeFormat("en-CA", {
+          timeZone: TIMEZONE,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        });
+        return names
+          .filter((name) => {
+            const filename = name.split("/").pop();
+            return (
+              filename.toLowerCase().endsWith(".mp4") &&
+              filename.startsWith(`${day}_`) &&
+              /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}/.test(filename)
+            );
+          })
+          .map((name) => {
+            const stampText = name.split("/").pop().slice(0, 19);
+            const stamp = new Date(
+              stampText
+                .replace("_", "T")
+                .replace(/-(\d{2})-(\d{2})$/, ":$1:$2") + "Z",
+            );
+            const parts = Object.fromEntries(
+              formatter
+                .formatToParts(stamp)
+                .map((part) => [part.type, part.value]),
+            );
+            const hour = Number(parts.hour);
+            return {
+              name,
+              recordedAt: stamp.toISOString(),
+              day: `${parts.year}-${parts.month}-${parts.day}`,
+              time: `${parts.hour}:${parts.minute}:${parts.second}`,
+              url: `/${encodeURIComponent(name)}`,
+              hour,
+            };
+          })
+          .filter((video) => {
+            const window = daylightWindow(video.day);
+            return (
+              window.sunrise &&
+              window.sunset &&
+              new Date(video.recordedAt) >= window.sunrise &&
+              new Date(video.recordedAt) <= window.sunset
+            );
+          })
+          .sort(
+            (a, b) =>
+              a.recordedAt.localeCompare(b.recordedAt) ||
+              a.name.localeCompare(b.name),
+          );
+      }
+      async function load() {
+        players.forEach((video) => {
+          video.removeAttribute("src");
+          video.load();
+        });
+        players = [];
+        previous.disabled = next.disabled = true;
+        gallery.replaceChildren();
+        status.textContent = "Loading videos…";
+        try {
+          const day = dayString(currentDay);
+          await loadAnalysis();
+          const videos = await publicCatalog(day);
+          previous.disabled = false;
+          next.disabled = false;
+          previous.textContent = "Next day";
+          next.textContent = "Previous day";
+          document.querySelector("#page-label").textContent = displayDay(day);
+          dateJump.value = day;
+          gallery.replaceChildren();
+          document.querySelector("#summary").textContent =
+            `${videos.length} daytime clips / oldest first / ${TIMEZONE}`;
+          if (!videos.length) {
+            gallery.textContent = "No footage is available in this bucket yet.";
+            status.textContent = "No videos available.";
+            return;
+          }
+          const section = document.createElement("section");
+          section.className = "day";
+          const heading = document.createElement("div");
+          heading.className = "day-heading";
+          const title = document.createElement("h2");
+          title.textContent = new Intl.DateTimeFormat("en-US", {
+            dateStyle: "full",
+            timeZone: "UTC",
+          }).format(new Date(day + "T12:00:00Z"));
+          const count = document.createElement("span");
+          count.className = "count";
+          count.textContent = `${videos.length} clips`;
+          heading.append(title, count);
+          section.append(heading);
+
+          const grid = document.createElement("div");
+          grid.className = "grid";
+          for (const item of videos) {
+            const card = document.createElement("figure");
+            card.title = item.name;
+            const video = document.createElement("video");
+            video.controls = true;
+            video.muted = true;
+            video.defaultMuted = true;
+            video.playsInline = true;
+            video.preload = "metadata";
+            video.src = item.url;
+            video.setAttribute("aria-label", `${day} ${item.time}`);
+
+            const caption = document.createElement("figcaption");
+            const time = document.createElement("time");
+            time.dateTime = item.recordedAt;
+            time.textContent = item.time;
+            const mainCaption = document.createElement("div");
+            mainCaption.className = "caption-main";
+            const duration = document.createElement("span");
+            duration.textContent = "…";
+            mainCaption.append(time, duration);
+            caption.append(mainCaption);
+
+            video.addEventListener("loadedmetadata", () => {
+              duration.textContent = formatDuration(
+                Number.isFinite(video.duration) ? video.duration * 1000 : 0,
+              );
+              video.currentTime = Math.min(0.1, video.duration / 2);
+            });
+            video.addEventListener(
+              "seeked",
+              () => {
+                try {
+                  const canvas = document.createElement("canvas");
+                  canvas.width = video.videoWidth;
+                  canvas.height = video.videoHeight;
+                  canvas.getContext("2d").drawImage(video, 0, 0);
+                  video.poster = canvas.toDataURL("image/jpeg", 0.72);
+                  video.pause();
+                } catch (_) {}
+              },
+              { once: true },
+            );
+
+            const record = analysisByName.get(item.name);
+            const videoWrap = document.createElement("div");
+            videoWrap.className = "video-wrap";
+            const overlay = document.createElement("canvas");
+            overlay.className = "overlay";
+            videoWrap.append(video, overlay);
+
+            const analysisEl = renderAnalysis(record);
+            const tag = analysisEl.querySelector(".badge.output");
+            if (tag && record) {
+              tag.title += "\n\n(click to play with detection boxes)";
+              const controller = makeOverlay(video, overlay, record);
+              tag.addEventListener("click", controller.start);
+            }
+
+            card.append(videoWrap, caption, analysisEl);
+            grid.append(card);
+            players.push(video);
+          }
+          section.append(grid);
+          gallery.append(section);
+          status.textContent = "Select any video to play it.";
+        } catch (error) {
+          gallery.textContent = error.message;
+          status.textContent = "Unable to load footage. Reload to retry.";
+        }
+      }
+      load();
+    </script>
+  </body>
+</html>
