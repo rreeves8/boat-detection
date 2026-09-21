@@ -636,7 +636,7 @@
 
       async function publicCatalog(day) {
         // Cloud CDN has no listing endpoint, so the day's clips are always
-        // derived from records.jsonl (every record carries its clip name).
+        // derived from the Supabase records (every row carries its clip name).
         await loadAnalysis();
         const names = [...analysisByName.keys()];
         const formatter = new Intl.DateTimeFormat("en-CA", {
