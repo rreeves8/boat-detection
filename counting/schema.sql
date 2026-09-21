@@ -1,7 +1,6 @@
--- Analysis records: one row per analyzed clip.
--- Public read, private edit: RLS lets anyone SELECT; only the secret/service key
--- (which bypasses RLS) can write. Apply with:
---   psql "$SUPABASE_DB_URL" -f counting/schema.sql
+-- Analysis records: one row per analyzed clip, stored in Supabase.
+-- Public read, private edit -- enforced by table GRANTs (no RLS): anon can only
+-- SELECT; the secret/service_role key is the only writer.
 
 create table if not exists public.clips (
   name          text primary key,             -- clip filename, e.g. 2026-09-20_13-49-13_<id>.mp4
@@ -16,11 +15,5 @@ create table if not exists public.clips (
 
 create index if not exists clips_recorded_at_idx on public.clips (recorded_at);
 
-alter table public.clips enable row level security;
-
--- public read
-drop policy if exists "public read" on public.clips;
-create policy "public read" on public.clips for select using (true);
-
--- no insert/update/delete policies => writes are denied to anon/authenticated;
--- the secret (service_role) key bypasses RLS and is the only writer.
+grant select on public.clips to anon, authenticated;
+grant select, insert, update, delete on public.clips to service_role;

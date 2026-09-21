@@ -1,16 +1,16 @@
-"""Orchestrator: pull clips from GCS, analyze each, and store records in GCS.
+"""Orchestrator: pull clips from GCS, analyze each, and store records in Supabase.
 
-    python -m counting.run analyze YYYY-MM-DD [...]
+    python -m counting.run analyze YYYY-MM-DD [...]          # skip clips already stored
+    python -m counting.run analyze YYYY-MM-DD [...] --force   # re-analyze + overwrite
 
-Records live only in the ``RECORDS_BUCKET`` object -- there is no local cache.
-``analyze`` fetches the existing records to learn which clips are already done
-(so it is resumable across runs), appends the new ones, and re-uploads the set.
+Each clip is upserted as one row (counting.store) as soon as it's analyzed, so
+runs are resumable and crash-safe, and re-analyzing a clip just updates its row.
+Requires SUPABASE_URL + SUPABASE_SECRET_KEY in the env (source .env locally).
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -21,15 +21,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from gcs import GCS  # noqa: E402
 from counting.analyze import ClipAnalyzer  # noqa: E402
 from counting.daylight import is_daytime  # noqa: E402
+from counting import store  # noqa: E402
 
 # Private bucket the source .mp4 clips are read from.
 SOURCE_BUCKET = "traffic-recordings"
-# Public bucket the analysis records are published to -- the same place the
-# landing page reads them from. The pipeline owns this upload; the Makefile does
-# not manage records.
-RECORDS_BUCKET = "boats-assets-boat-detection-509220"
-# Object name the UI fetches the analysis records from.
-RECORDS_OBJECT = "records.jsonl"
 
 
 def parse_start(name: str) -> float:
@@ -39,27 +34,17 @@ def parse_start(name: str) -> float:
     return dt.timestamp()
 
 
-def fetch_records(storage: GCS) -> list[dict]:
-    """Load the current records set from the bucket (empty if none exists yet)."""
-    with storage.open_video(RECORDS_OBJECT) as response:
-        if response.status_code == 404:
-            return []
-        response.raise_for_status()
-        text = response.text
-    return [json.loads(line) for line in text.splitlines() if line.strip()]
-
-
-def upload_records(storage: GCS, records: list[dict]) -> None:
-    """Serialize records to JSONL and upload them for the UI to fetch."""
-    data = "".join(json.dumps(r) + "\n" for r in records).encode()
-    storage.upload_stream(
-        RECORDS_OBJECT,
-        [data],
-        size=len(data),
-        content_type="application/x-ndjson",
-        overwrite=True,
-    )
-    print(f"Published {len(records)} records -> gs://{storage.bucket}/{RECORDS_OBJECT} ({len(data)} bytes)")
+def to_row(name: str, start: float, record: dict) -> dict:
+    """Map an analyzer record to a ``clips`` table row."""
+    return {
+        "name": name,
+        "recorded_at": datetime.fromtimestamp(start, timezone.utc).isoformat(),
+        "moving_count": record["moving_count"],
+        "total_frames": record["total_frames"],
+        "fps": record["fps"],
+        "resolution": record["resolution"],
+        "objects": record["objects"],
+    }
 
 
 def download_to(storage: GCS, name: str, dest: Path) -> None:
@@ -87,11 +72,9 @@ def iter_day_clips(storage: GCS, day: str):
 
 def cmd_analyze(args: argparse.Namespace) -> None:
     storage = GCS(SOURCE_BUCKET)
-    records_gcs = GCS(RECORDS_BUCKET)
     analyzer = ClipAnalyzer()
 
-    records = fetch_records(records_gcs)
-    done = {r["name"] for r in records}
+    done = set() if args.force else store.existing_names()
     processed = 0
 
     for day in args.days:
@@ -101,19 +84,12 @@ def cmd_analyze(args: argparse.Namespace) -> None:
             with tempfile.NamedTemporaryFile(suffix=".mp4") as tmp:
                 download_to(storage, name, Path(tmp.name))
                 record = analyzer.analyze(tmp.name)
-            # Real clip duration from decoded frame count and source fps.
-            duration = record["total_frames"] / (record["fps"] or 15.0)
-            record.update({"name": name, "start": start, "end": start + duration})
-            records.append(record)
-            done.add(name)
+            store.upsert(to_row(name, start, record))
             processed += 1
             print(f"{name}: {record['moving_count']} moving")
 
-    print(f"\nAnalyzed {processed} new clips (days: {', '.join(args.days)})")
+    print(f"\nAnalyzed {processed} clips (days: {', '.join(args.days)}) -> Supabase")
     storage.close()
-    if processed and not args.no_publish:
-        upload_records(records_gcs, records)
-    records_gcs.close()
 
 
 def main() -> None:
@@ -123,8 +99,8 @@ def main() -> None:
     p_analyze = sub.add_parser("analyze", help="download + analyze clips from GCS")
     p_analyze.add_argument("days", nargs="+", metavar="YYYY-MM-DD",
                            help="one or more days to analyze (daytime clips only)")
-    p_analyze.add_argument("--no-publish", action="store_true",
-                           help="analyze without uploading the updated records")
+    p_analyze.add_argument("--force", action="store_true",
+                           help="re-analyze and overwrite clips already stored")
     p_analyze.set_defaults(func=cmd_analyze)
 
     args = parser.parse_args()

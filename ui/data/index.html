@@ -417,10 +417,13 @@
       const TIMEZONE = "America/Toronto";
       const MUSKOKA_LATITUDE = 45.0;
       const MUSKOKA_LONGITUDE = -79.5;
-      // Same-origin object paths in both environments: Cloud CDN serves them in
-      // production (gated by the signed cookie); serve.py proxies them from the
-      // private bucket with your gcloud credentials when running locally.
-      const RECORDS_URL = "/records.jsonl";
+      // Video clips are same-origin object paths in both environments: Cloud CDN
+      // serves them in production (gated by the signed cookie); serve.py proxies
+      // them from the private bucket with your gcloud credentials when running
+      // locally. The analysis records, however, come from the public Supabase
+      // `clips` table (anon has SELECT only) — see counting/schema.sql.
+      const SUPABASE_URL = "https://qtexafttduxkoxzalihr.supabase.co";
+      const SUPABASE_KEY = "sb_publishable_FX1AlLYc2ikyemuukF954w_K_wk81OR";
       let analysisByName = new Map();
 
       function daylightWindow(day) {
@@ -484,16 +487,20 @@
       const DIRECTION_ARROW = { "L->R": "→", "R->L": "←", ambiguous: "•" };
 
       async function loadAnalysis() {
-        // Fetched once and reused across days; missing file just means nothing
-        // has been analyzed yet, so every clip renders as "pending".
+        // Fetched once and reused across days; an empty table just means nothing
+        // has been analyzed yet, so every clip renders as "pending". The full
+        // row is kept per clip — the overlay + modal need `objects`/`track`.
         if (analysisByName.size) return;
         try {
-          const response = await fetch(RECORDS_URL, { cache: "no-store" });
+          const url =
+            `${SUPABASE_URL}/rest/v1/clips?select=*&order=recorded_at.asc`;
+          const response = await fetch(url, {
+            headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
+            cache: "no-store",
+          });
           if (!response.ok) return;
-          const text = await response.text();
-          for (const line of text.split("\n")) {
-            if (!line.trim()) continue;
-            const record = JSON.parse(line);
+          const records = await response.json();
+          for (const record of records) {
             if (record.name) analysisByName.set(record.name, record);
           }
         } catch (_) {
@@ -688,12 +695,33 @@
               a.name.localeCompare(b.name),
           );
       }
+      // Only attach a clip's source once its card scrolls near the viewport, so
+      // a day with dozens of clips doesn't open every <video> (and its metadata
+      // fetch through the proxy) up front. Recreated per load() so it never
+      // holds references to cards from a previous day.
+      let lazyObserver = null;
+      function observeLazyVideo(video) {
+        lazyObserver.observe(video);
+      }
+
       async function load() {
         players.forEach((video) => {
           video.removeAttribute("src");
           video.load();
         });
         players = [];
+        if (lazyObserver) lazyObserver.disconnect();
+        lazyObserver = new IntersectionObserver(
+          (entries, observer) => {
+            for (const entry of entries) {
+              if (!entry.isIntersecting) continue;
+              const video = entry.target;
+              if (!video.src && video.dataset.src) video.src = video.dataset.src;
+              observer.unobserve(video);
+            }
+          },
+          { rootMargin: "600px 0px" },
+        );
         previous.disabled = next.disabled = true;
         gallery.replaceChildren();
         status.textContent = "Loading videos…";
@@ -750,7 +778,7 @@
             video.playsInline = true;
             video.setAttribute("aria-label", `${day} ${item.time}`);
             video.preload = "metadata";
-            video.src = item.url;
+            video.dataset.src = item.url;
 
             const caption = document.createElement("figcaption");
             const time = document.createElement("time");
@@ -795,6 +823,7 @@
             card.append(video, caption, analysisEl);
             grid.append(card);
             players.push(video);
+            observeLazyVideo(video);
           }
           section.append(grid);
           gallery.append(section);
