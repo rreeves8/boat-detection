@@ -415,8 +415,6 @@
         timeZone: TIMEZONE,
       }).format(new Date(`${day}T12:00:00`));
       const TIMEZONE = "America/Toronto";
-      const MUSKOKA_LATITUDE = 45.0;
-      const MUSKOKA_LONGITUDE = -79.5;
       // Video clips are same-origin object paths in both environments: Cloud CDN
       // serves them in production (gated by the signed cookie); serve.py proxies
       // them from the private bucket with your gcloud credentials when running
@@ -424,52 +422,6 @@
       // `clips` table (anon has SELECT only) — see counting/schema.sql.
       const SUPABASE_URL = "https://qtexafttduxkoxzalihr.supabase.co";
       const SUPABASE_KEY = "sb_publishable_FX1AlLYc2ikyemuukF954w_K_wk81OR";
-      let analysisByName = new Map();
-
-      function daylightWindow(day) {
-        const [year, month, date] = day.split("-").map(Number);
-        const dayOfYear = Math.floor(
-          (Date.UTC(year, month - 1, date) - Date.UTC(year, 0, 0)) / 86400000,
-        );
-        const radians = (value) => (value * Math.PI) / 180;
-        const degrees = (value) => (value * 180) / Math.PI;
-        const solarTime = (hour, sunrise) => {
-          const longitudeHour = MUSKOKA_LONGITUDE / 15;
-          const t = dayOfYear + (hour - longitudeHour) / 24;
-          const meanAnomaly = 0.9856 * t - 3.289;
-          let longitude =
-            meanAnomaly +
-            1.916 * Math.sin(radians(meanAnomaly)) +
-            0.02 * Math.sin(radians(2 * meanAnomaly)) +
-            282.634;
-          longitude = (longitude + 360) % 360;
-          let rightAscension = degrees(
-            Math.atan(0.91764 * Math.tan(radians(longitude))),
-          );
-          rightAscension = (rightAscension + 360) % 360;
-          rightAscension +=
-            (Math.floor(longitude / 90) - Math.floor(rightAscension / 90)) * 90;
-          rightAscension /= 15;
-          const sinDeclination = 0.39782 * Math.sin(radians(longitude));
-          const cosDeclination = Math.cos(Math.asin(sinDeclination));
-          const cosineHourAngle =
-            (Math.cos(radians(90.833)) -
-              sinDeclination * Math.sin(radians(MUSKOKA_LATITUDE))) /
-            (cosDeclination * Math.cos(radians(MUSKOKA_LATITUDE)));
-          if (cosineHourAngle > 1 || cosineHourAngle < -1) return null;
-          let hourAngle = degrees(Math.acos(cosineHourAngle));
-          if (sunrise) hourAngle = 360 - hourAngle;
-          hourAngle /= 15;
-          const localMeanTime =
-            hourAngle + rightAscension - 0.06571 * t - 6.622;
-          // Keep values at or above 24 hours: sunset can fall on the next UTC date.
-          let utcHour = localMeanTime - longitudeHour;
-          if (sunrise && utcHour < 0) utcHour += 24;
-          if (!sunrise && utcHour < 12) utcHour += 24;
-          return new Date(Date.UTC(year, month - 1, date) + utcHour * 3600000);
-        };
-        return { sunrise: solarTime(6, true), sunset: solarTime(18, false) };
-      }
       let players = [];
       previous.addEventListener("click", () => { currentDay.setDate(currentDay.getDate() + 1); load(); });
       next.addEventListener("click", () => { currentDay.setDate(currentDay.getDate() - 1); load(); });
@@ -484,43 +436,12 @@
         const totalSeconds = Math.round(milliseconds / 1000);
         return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
       };
-      const DIRECTION_ARROW = { "L->R": "→", "R->L": "←", ambiguous: "•" };
 
-      async function loadAnalysis() {
-        // Fetched once and reused across days; an empty table just means nothing
-        // has been analyzed yet, so every clip renders as "pending". The full
-        // row is kept per clip — the overlay + modal need `objects`/`track`.
-        if (analysisByName.size) return;
-        try {
-          const url =
-            `${SUPABASE_URL}/rest/v1/clips?select=*&order=recorded_at.asc`;
-          const response = await fetch(url, {
-            headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
-            cache: "no-store",
-          });
-          if (!response.ok) return;
-          const records = await response.json();
-          for (const record of records) {
-            if (record.name) analysisByName.set(record.name, record);
-          }
-        } catch (_) {
-          // Leave the map empty; cards fall back to the pending state.
-        }
-      }
-
-      function renderAnalysis(record) {
+      function renderAnalysis() {
+        // Every listed clip is in the table (analyzed). The "view" tag opens the
+        // modal, which plays the video with the tracked box + a record summary.
         const wrap = document.createElement("div");
         wrap.className = "analysis";
-        if (!record) {
-          const badge = document.createElement("span");
-          badge.className = "badge pending";
-          badge.textContent = "Not analyzed";
-          wrap.append(badge);
-          return wrap;
-        }
-        // We only detect motion right now -- we don't classify the object -- so
-        // don't invent a label. A "view" tag opens the clip in a modal that
-        // plays the video with the tracked box and shows the raw record below.
         const tag = document.createElement("span");
         tag.className = "badge view";
         tag.textContent = "view";
@@ -611,14 +532,27 @@
         return lines.join("\n");
       }
 
-      function openModal(item, record) {
-        modalRecord = record || null;
+      async function openModal(item) {
+        modalRecord = null;
         modalTitle.textContent = item.name;
-        modalJson.textContent = summarizeRecord(record);
+        modalJson.textContent = "loading…";
         modal.hidden = false;
         modalVideo.src = item.url;
         modalVideo.currentTime = 0;
         modalVideo.play().catch(() => {});
+        // Fetch this clip's full row (objects/track) only now that it's opened.
+        try {
+          const url =
+            `${SUPABASE_URL}/rest/v1/clips?select=*&name=eq.${encodeURIComponent(item.name)}`;
+          const r = await fetch(url, {
+            headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
+            cache: "no-store",
+          });
+          modalRecord = r.ok ? (await r.json())[0] || null : null;
+        } catch (_) {
+          modalRecord = null;
+        }
+        modalJson.textContent = summarizeRecord(modalRecord);
       }
       function closeModal() {
         modalVideo.pause();
@@ -635,65 +569,42 @@
       });
 
       async function publicCatalog(day) {
-        // Cloud CDN has no listing endpoint, so the day's clips are always
-        // derived from the Supabase records (every row carries its clip name).
-        await loadAnalysis();
-        const names = [...analysisByName.keys()];
+        // The day's clips come straight from Supabase. Records are already
+        // daytime-only (the counting pipeline filters with is_daytime), so no
+        // extra daylight filtering here. Lightweight columns only -- the modal
+        // fetches the full row (objects/track) on demand.
+        const url =
+          `${SUPABASE_URL}/rest/v1/clips` +
+          `?select=name,moving_count&name=like.${day}_*&order=name.asc`;
+        const response = await fetch(url, {
+          headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error(`Supabase ${response.status}`);
+        const rows = await response.json();
         const formatter = new Intl.DateTimeFormat("en-CA", {
           timeZone: TIMEZONE,
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
           hour: "2-digit",
           minute: "2-digit",
           second: "2-digit",
           hour12: false,
         });
-        return names
-          .filter((name) => {
-            const filename = name.split("/").pop();
-            return (
-              filename.toLowerCase().endsWith(".mp4") &&
-              filename.startsWith(`${day}_`) &&
-              /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}/.test(filename)
-            );
-          })
-          .map((name) => {
-            const stampText = name.split("/").pop().slice(0, 19);
-            const stamp = new Date(
-              stampText
-                .replace("_", "T")
-                .replace(/-(\d{2})-(\d{2})$/, ":$1:$2") + "Z",
-            );
-            const parts = Object.fromEntries(
-              formatter
-                .formatToParts(stamp)
-                .map((part) => [part.type, part.value]),
-            );
-            const hour = Number(parts.hour);
-            return {
-              name,
-              recordedAt: stamp.toISOString(),
-              day: `${parts.year}-${parts.month}-${parts.day}`,
-              time: `${parts.hour}:${parts.minute}:${parts.second}`,
-              url: `/${encodeURIComponent(name)}`,
-              hour,
-            };
-          })
-          .filter((video) => {
-            const window = daylightWindow(video.day);
-            return (
-              window.sunrise &&
-              window.sunset &&
-              new Date(video.recordedAt) >= window.sunrise &&
-              new Date(video.recordedAt) <= window.sunset
-            );
-          })
-          .sort(
-            (a, b) =>
-              a.recordedAt.localeCompare(b.recordedAt) ||
-              a.name.localeCompare(b.name),
+        return rows.map((row) => {
+          const stampText = row.name.split("/").pop().slice(0, 19);
+          const stamp = new Date(
+            stampText.replace("_", "T").replace(/-(\d{2})-(\d{2})$/, ":$1:$2") + "Z",
           );
+          const parts = Object.fromEntries(
+            formatter.formatToParts(stamp).map((part) => [part.type, part.value]),
+          );
+          return {
+            name: row.name,
+            recordedAt: stamp.toISOString(),
+            time: `${parts.hour}:${parts.minute}:${parts.second}`,
+            url: `/${encodeURIComponent(row.name)}`,
+            moving_count: row.moving_count,
+          };
+        });
       }
       // Only attach a clip's source once its card scrolls near the viewport, so
       // a day with dozens of clips doesn't open every <video> (and its metadata
@@ -727,7 +638,6 @@
         status.textContent = "Loading videos…";
         try {
           const day = dayString(currentDay);
-          await loadAnalysis();
           const videos = await publicCatalog(day);
           previous.disabled = false;
           next.disabled = false;
@@ -812,13 +722,13 @@
               { once: true },
             );
 
-            const record = analysisByName.get(item.name);
             video.classList.add("thumb");
-            video.addEventListener("click", () => openModal(item, record));
+            video.addEventListener("click", () => openModal(item));
 
-            const analysisEl = renderAnalysis(record);
-            const tag = analysisEl.querySelector(".badge.view");
-            if (tag) tag.addEventListener("click", () => openModal(item, record));
+            const analysisEl = renderAnalysis();
+            analysisEl
+              .querySelector(".badge.view")
+              .addEventListener("click", () => openModal(item));
 
             card.append(video, caption, analysisEl);
             grid.append(card);

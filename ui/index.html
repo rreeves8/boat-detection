@@ -170,8 +170,8 @@
       // moved here. See counting/schema.sql for the table shape.
       const SUPABASE_URL = "https://qtexafttduxkoxzalihr.supabase.co";
       const SUPABASE_KEY = "sb_publishable_FX1AlLYc2ikyemuukF954w_K_wk81OR";
-      async function fetchClips(select) {
-        const url = `${SUPABASE_URL}/rest/v1/clips?select=${select}&order=recorded_at.asc`;
+      async function fetchView(name, select) {
+        const url = `${SUPABASE_URL}/rest/v1/${name}?select=${select}`;
         const response = await fetch(url, {
           headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
           cache: "no-store",
@@ -182,79 +182,28 @@
 
       const GREEN = "#8fe6ab";
 
-      const tzParts = new Intl.DateTimeFormat("en-CA", {
-        timeZone: TIMEZONE,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        hour12: false,
-      });
-
-      // Filenames are YYYY-MM-DD_HH-MM-SS_<id>.mp4, recorded in UTC.
-      function stampFromName(name) {
-        const base = name.split("/").pop();
-        if (!/^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}/.test(base)) return null;
-        const iso =
-          base.slice(0, 19).replace("_", "T").replace(/-(\d{2})-(\d{2})$/, ":$1:$2") +
-          "Z";
-        const date = new Date(iso);
-        return Number.isNaN(date.getTime()) ? null : date;
-      }
-
-      function localParts(date) {
-        const parts = Object.fromEntries(
-          tzParts.formatToParts(date).map((p) => [p.type, p.value]),
-        );
-        return {
-          day: `${parts.year}-${parts.month}-${parts.day}`,
-          hour: Number(parts.hour) % 24,
-        };
-      }
-
-      async function loadRecords() {
-        // The charts only need the clip name (for the timestamp) and the mover
-        // count, so skip the heavy per-frame `objects`/`track` arrays.
-        return fetchClips("name,recorded_at,moving_count");
-      }
-
-      function aggregate(records) {
-        const perDay = new Map(); // day -> moving objects
-        const perHour = Array(24).fill(0);
+      // The landing reads pre-aggregated views (clips_daily / clips_hourly), so it
+      // never pulls per-clip rows or hits PostgREST's 1000-row cap. The views
+      // already bucket by local day/hour (America/Toronto).
+      async function loadData() {
+        const [daily, hourly] = await Promise.all([
+          fetchView("clips_daily", "day,movers"),
+          fetchView("clips_hourly", "hour,movers"),
+        ]);
+        const perDay = new Map();
         let movers = 0;
-        let activeClips = 0;
-        let analyzed = 0;
-
-        for (const record of records) {
-          if (!record || !record.name) continue;
-          const date = stampFromName(record.name);
-          if (!date) continue;
-          analyzed++;
-          const { day, hour } = localParts(date);
-
-          const count = record.moving_count || 0;
-          if (count) activeClips++;
-          perDay.set(day, (perDay.get(day) || 0) + count);
-          movers += count;
-          perHour[hour] += count;
-        }
-
-        const days = [...perDay.keys()].sort();
         let busiest = null;
-        for (const [day, count] of perDay) {
-          if (!busiest || count > busiest.count) busiest = { day, count };
+        for (const row of daily) {
+          perDay.set(row.day, row.movers);
+          movers += row.movers;
+          if (!busiest || row.movers > busiest.count) {
+            busiest = { day: row.day, count: row.movers };
+          }
         }
-
-        return {
-          days,
-          perDay,
-          perHour,
-          movers,
-          activeClips,
-          analyzed,
-          busiest,
-          dayCount: days.length,
-        };
+        const perHour = Array(24).fill(0);
+        for (const row of hourly) perHour[row.hour] = row.movers;
+        const days = [...perDay.keys()].sort();
+        return { days, perDay, perHour, movers, busiest, dayCount: days.length };
       }
 
       function renderStats(data) {
@@ -338,9 +287,8 @@
 
       (async function () {
         try {
-          const records = await loadRecords();
-          const data = aggregate(records);
-          if (!data.analyzed) throw new Error("empty");
+          const data = await loadData();
+          if (!data.days.length) throw new Error("empty");
           renderStats(data);
           renderCharts(data);
         } catch (_) {

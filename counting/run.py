@@ -56,6 +56,16 @@ def download_to(storage: GCS, name: str, dest: Path) -> None:
                     fh.write(chunk)
 
 
+def all_days(storage: GCS) -> list[str]:
+    """Distinct YYYY-MM-DD dates that have .mp4 clips in the bucket."""
+    days = set()
+    for obj in storage.list_objects():
+        name = obj["name"]
+        if name.endswith(".mp4") and obj.get("size"):
+            days.add(name[:10])
+    return sorted(days)
+
+
 def iter_day_clips(storage: GCS, day: str):
     """Yield ``(name, start_epoch)`` for daytime .mp4 clips recorded on ``day``."""
     for obj in storage.list_objects(prefix=f"{day}_"):
@@ -75,9 +85,10 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     analyzer = ClipAnalyzer()
 
     done = set() if args.force else store.existing_names()
+    days = args.days or all_days(storage)
     processed = 0
 
-    for day in args.days:
+    for day in days:
         for name, start in iter_day_clips(storage, day):
             if name in done:
                 continue
@@ -88,7 +99,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
             processed += 1
             print(f"{name}: {record['moving_count']} moving")
 
-    print(f"\nAnalyzed {processed} clips (days: {', '.join(args.days)}) -> Supabase")
+    print(f"\nAnalyzed {processed} clips across {len(days)} day(s) -> Supabase")
     storage.close()
 
 
@@ -97,8 +108,8 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_analyze = sub.add_parser("analyze", help="download + analyze clips from GCS")
-    p_analyze.add_argument("days", nargs="+", metavar="YYYY-MM-DD",
-                           help="one or more days to analyze (daytime clips only)")
+    p_analyze.add_argument("days", nargs="*", metavar="YYYY-MM-DD",
+                           help="days to analyze (daytime clips only); omit to do every day in the bucket")
     p_analyze.add_argument("--force", action="store_true",
                            help="re-analyze and overwrite clips already stored")
     p_analyze.set_defaults(func=cmd_analyze)
