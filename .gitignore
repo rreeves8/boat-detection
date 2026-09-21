@@ -19,5 +19,21 @@ venv/
 # Scraper output
 videos/
 .DS_Store
+
+# Analysis records live in GCS now, not on disk (see counting/run.py)
+counting/records.jsonl
+ui/records.jsonl
 infra/.terraform.lock.hcl
 weights/clip/ViT-B-32.pt
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+/counting/weights

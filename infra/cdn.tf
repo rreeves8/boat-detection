@@ -26,10 +26,24 @@ resource "google_compute_managed_ssl_certificate" "cdn" {
   }
 }
 
-# Public content (landing + records.jsonl): CDN reads the private bucket, no gate.
+# Small PUBLIC bucket for the login page shown on 403 (an unsigned backend can
+# only serve a genuinely public bucket, so this can't live in the private one).
+resource "google_storage_bucket" "assets" {
+  name                        = "boats-assets-boat-detection-509220"
+  location                    = "US-EAST1"
+  project                     = "boat-detection-509220"
+  uniform_bucket_level_access = true
+}
+
+resource "google_storage_bucket_iam_member" "assets_public" {
+  bucket = google_storage_bucket.assets.name
+  role   = "roles/storage.objectViewer"
+  member = "allUsers"
+}
+
 resource "google_compute_backend_bucket" "public" {
   name        = "boats-public"
-  bucket_name = google_storage_bucket.recordings.name
+  bucket_name = google_storage_bucket.assets.name
   enable_cdn  = true
 }
 
@@ -60,7 +74,7 @@ resource "google_storage_bucket_iam_member" "cdn_fill" {
 
 # Routing: gated by default; only the landing + records.jsonl are public. Videos
 # live at the bucket root, so leaving them on the default (gated) backend covers
-# them without per-extension rules. (/login is added with the login service.)
+# them without per-extension rules.
 resource "google_compute_url_map" "cdn" {
   name            = "boats-urlmap"
   default_service = google_compute_backend_bucket.gated.id
@@ -70,11 +84,14 @@ resource "google_compute_url_map" "cdn" {
     path_matcher = "main"
   }
 
+  # Public landing + records come from the public assets bucket (with the login
+  # form on the page); /data + videos stay on the signed backend over the
+  # private bucket and require the Cloud CDN cookie.
   path_matcher {
     name            = "main"
     default_service = google_compute_backend_bucket.gated.id
 
-    # Landing at "/" -> index.html (backend buckets have no directory index).
+    # Public landing "/" -> index.html in the public assets bucket.
     path_rule {
       paths   = ["/"]
       service = google_compute_backend_bucket.public.id
@@ -85,15 +102,17 @@ resource "google_compute_url_map" "cdn" {
       }
     }
 
+    # Public analysis feed for the landing charts.
     path_rule {
-      paths   = ["/index.html", "/records.jsonl"]
+      paths   = ["/records.jsonl"]
       service = google_compute_backend_bucket.public.id
     }
 
-    # Gated viewer page: "/data" and "/data/" -> data/index.html.
+    # Public viewer page (catalog is derived from the public records.jsonl, so it
+    # leaks nothing new). Only the video files below stay gated.
     path_rule {
       paths   = ["/data", "/data/"]
-      service = google_compute_backend_bucket.gated.id
+      service = google_compute_backend_bucket.public.id
       route_action {
         url_rewrite {
           path_prefix_rewrite = "/data/index.html"

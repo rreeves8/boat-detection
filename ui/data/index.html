@@ -54,6 +54,40 @@
         opacity: 0.4;
         cursor: default;
       }
+      .login {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .login input {
+        width: 100%;
+        background: #101315;
+        border: 1px solid #2a332e;
+        border-radius: 6px;
+        color: #edf1ee;
+        padding: 12px;
+        font-size: 14px;
+        text-align: center;
+      }
+      .login button {
+        width: 100%;
+      }
+      .modal-card.login-card {
+        width: min(300px, 90vw);
+        padding: 32px 28px;
+        text-align: center;
+      }
+      .login-title {
+        font-size: 19px;
+        font-weight: 500;
+        margin: 0 0 6px;
+      }
+      .login-sub {
+        color: #97a29b;
+        font-size: 13px;
+        line-height: 1.45;
+        margin: 0 0 22px;
+      }
       .toolbar {
         display: flex;
         gap: 8px;
@@ -152,12 +186,12 @@
         background: #242a27;
         color: #6a746e;
       }
-      .badge.output {
+      .badge.view {
         background: #1f2d3d;
         color: #8fbfe6;
         cursor: pointer;
       }
-      .badge.output:hover {
+      .badge.view:hover {
         background: #294056;
       }
       .video-wrap {
@@ -171,6 +205,82 @@
         height: 100%;
         pointer-events: none;
         display: none;
+      }
+      .thumb {
+        cursor: pointer;
+      }
+      .modal[hidden] {
+        display: none;
+      }
+      .modal {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      .modal-backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.72);
+      }
+      .modal-card {
+        position: relative;
+        z-index: 1;
+        background: #121714;
+        border: 1px solid #303b34;
+        border-radius: 10px;
+        width: min(880px, 95vw);
+        max-height: 92vh;
+        overflow: auto;
+        padding: 16px;
+      }
+      .modal-close {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        z-index: 2;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        font-size: 15px;
+        line-height: 1;
+        background: #27332c;
+        color: #d7e5db;
+      }
+      .modal .video-wrap {
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        border-radius: 8px;
+        overflow: hidden;
+        background: #000;
+      }
+      .modal video {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+      .modal-title {
+        font-size: 13px;
+        color: #bccbc1;
+        margin: 12px 2px 8px;
+        word-break: break-all;
+      }
+      .modal-json {
+        margin: 0;
+        max-height: 42vh;
+        overflow: auto;
+        padding: 12px;
+        background: #0c0f0d;
+        border: 1px solid #263029;
+        border-radius: 6px;
+        font-size: 11px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: #cfe0d5;
       }
       .boat-line {
         color: #cfe0d5;
@@ -233,12 +343,65 @@
       ><input id="date-jump" class="date-jump" type="date" aria-label="Jump to date" />
     </nav>
     <main id="gallery"><div class="message">Loading the archive…</div></main>
+    <div id="modal" class="modal" hidden>
+      <div class="modal-backdrop"></div>
+      <div class="modal-card" role="dialog" aria-modal="true">
+        <button id="modal-close" class="modal-close" aria-label="Close">&#10005;</button>
+        <div class="video-wrap">
+          <video id="modal-video" controls muted playsinline></video>
+          <canvas id="modal-overlay" class="overlay"></canvas>
+        </div>
+        <div id="modal-title" class="modal-title"></div>
+        <pre id="modal-json" class="modal-json"></pre>
+      </div>
+    </div>
+    <div id="login-modal" class="modal" hidden>
+      <div class="modal-backdrop"></div>
+      <div class="modal-card login-card" role="dialog" aria-modal="true" aria-label="Log in">
+        <h2 class="login-title">Enter passphrase</h2>
+        <p class="login-sub">The footage is private. Enter the passphrase to watch.</p>
+        <form class="login" method="POST" action="https://login.magnusreeves.com/">
+          <input
+            type="password"
+            name="password"
+            placeholder="Passphrase"
+            aria-label="Passphrase"
+            autocomplete="current-password"
+          />
+          <button type="submit">Unlock &rarr;</button>
+        </form>
+      </div>
+    </div>
     <script>
       const gallery = document.querySelector("#gallery");
       const status = document.querySelector("#status");
       const previous = document.querySelector("#previous");
       const next = document.querySelector("#next");
       const dateJump = document.querySelector("#date-jump");
+      const loginModal = document.getElementById("login-modal");
+      let authed = null;
+
+      // Blocking, non-dismissable: when auth fails this is all the user sees.
+      function showLoginModal() {
+        loginModal.hidden = false;
+        loginModal.querySelector("input")?.focus();
+      }
+
+      // One request to test access before loading a day of videos. If the sample
+      // clip is 403 we're not logged in — nothing else is shown, just the modal.
+      async function checkAuth(sampleUrl) {
+        if (authed !== null) return authed;
+        try {
+          const r = await fetch(sampleUrl, {
+            headers: { Range: "bytes=0-0" },
+            cache: "no-store",
+          });
+          authed = r.status === 200 || r.status === 206;
+        } catch (_) {
+          authed = false;
+        }
+        return authed;
+      }
       let currentDay = new Date();
       currentDay.setDate(currentDay.getDate() - 1);
       const dayString = (date) => {
@@ -349,22 +512,19 @@
           return wrap;
         }
         // We only detect motion right now -- we don't classify the object -- so
-        // don't invent a label. Show a plain "output" tag; hover it to read the
-        // entire raw record the detector produced for this clip.
+        // don't invent a label. A "view" tag opens the clip in a modal that
+        // plays the video with the tracked box and shows the raw record below.
         const tag = document.createElement("span");
-        tag.className = "badge output";
-        tag.textContent = "output";
-        tag.title = JSON.stringify(record, null, 2);
+        tag.className = "badge view";
+        tag.textContent = "view";
         wrap.append(tag);
         return wrap;
       }
 
       // Draw each object's tracked box onto a canvas over the video, synced to
       // playback, so clicking "output" replays what the detector found moving.
-      function makeOverlay(video, canvas, record) {
+      function makeOverlay(video, canvas, getRecord) {
         const ctx = canvas.getContext("2d");
-        const fps = record.fps || 15;
-        const objects = record.objects || record.boats || [];
         let raf = 0;
         function draw() {
           const w = video.clientWidth;
@@ -372,6 +532,10 @@
           if (canvas.width !== w) canvas.width = w;
           if (canvas.height !== h) canvas.height = h;
           ctx.clearRect(0, 0, w, h);
+          const record = getRecord();
+          if (!record) return;
+          const fps = record.fps || 15;
+          const objects = record.objects || [];
           const frame = video.currentTime * fps;
           ctx.lineWidth = 2;
           ctx.strokeStyle = "#8fe6ab";
@@ -392,7 +556,6 @@
             const x = best[1] * w;
             const y = best[2] * h;
             ctx.strokeRect(x, y, best[3] * w, best[4] * h);
-            if (obj.direction) ctx.fillText(obj.direction, x, Math.max(12, y - 4));
           }
         }
         function loop() {
@@ -409,14 +572,60 @@
           if (canvas.style.display === "block") draw();
         });
         video.addEventListener("ended", draw);
-        return {
-          start() {
-            canvas.style.display = "block";
-            video.currentTime = 0;
-            video.play();
-          },
-        };
       }
+
+      // ---- detail modal: play the clip with its tracked box + raw record -----
+      const modal = document.getElementById("modal");
+      const modalVideo = document.getElementById("modal-video");
+      const modalOverlay = document.getElementById("modal-overlay");
+      const modalJson = document.getElementById("modal-json");
+      const modalTitle = document.getElementById("modal-title");
+      let modalRecord = null;
+      makeOverlay(modalVideo, modalOverlay, () => modalRecord);
+
+      // A readable summary of the record -- omits the per-frame track arrays
+      // (used to move the box) that would otherwise bloat the panel.
+      function summarizeRecord(record) {
+        if (!record) return "(not analyzed)";
+        const res = record.resolution
+          ? `${record.resolution[0]}×${record.resolution[1]}`
+          : "?";
+        const n = record.moving_count || 0;
+        const lines = [
+          `${n} moving object${n === 1 ? "" : "s"}`,
+          `clip: ${record.total_frames} frames @ ${record.fps} fps · ${res}`,
+        ];
+        (record.objects || []).forEach((o, i) => {
+          const box = (o.box || []).join(", ");
+          lines.push(
+            `object ${i + 1}: box [${box}] · seen ${o.frames_visible} frames · travel ${o.travel}`,
+          );
+        });
+        return lines.join("\n");
+      }
+
+      function openModal(item, record) {
+        modalRecord = record || null;
+        modalTitle.textContent = item.name;
+        modalJson.textContent = summarizeRecord(record);
+        modal.hidden = false;
+        modalVideo.src = item.url;
+        modalVideo.currentTime = 0;
+        modalVideo.play().catch(() => {});
+      }
+      function closeModal() {
+        modalVideo.pause();
+        modalVideo.removeAttribute("src");
+        modalVideo.load();
+        modalOverlay.style.display = "none";
+        modal.hidden = true;
+        modalRecord = null;
+      }
+      document.getElementById("modal-close").addEventListener("click", closeModal);
+      document.querySelector(".modal-backdrop").addEventListener("click", closeModal);
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && !modal.hidden) closeModal();
+      });
 
       async function publicCatalog(day) {
         // Cloud CDN has no listing endpoint, so the day's clips are always
@@ -506,6 +715,14 @@
             status.textContent = "No videos available.";
             return;
           }
+          // Probe once. Not logged in -> show only the login modal, nothing else.
+          await checkAuth(videos[0].url);
+          if (!authed) {
+            gallery.replaceChildren();
+            status.textContent = "";
+            showLoginModal();
+            return;
+          }
           const section = document.createElement("section");
           section.className = "day";
           const heading = document.createElement("div");
@@ -527,13 +744,13 @@
             const card = document.createElement("figure");
             card.title = item.name;
             const video = document.createElement("video");
-            video.controls = true;
+            video.controls = false;
             video.muted = true;
             video.defaultMuted = true;
             video.playsInline = true;
+            video.setAttribute("aria-label", `${day} ${item.time}`);
             video.preload = "metadata";
             video.src = item.url;
-            video.setAttribute("aria-label", `${day} ${item.time}`);
 
             const caption = document.createElement("figcaption");
             const time = document.createElement("time");
@@ -568,21 +785,14 @@
             );
 
             const record = analysisByName.get(item.name);
-            const videoWrap = document.createElement("div");
-            videoWrap.className = "video-wrap";
-            const overlay = document.createElement("canvas");
-            overlay.className = "overlay";
-            videoWrap.append(video, overlay);
+            video.classList.add("thumb");
+            video.addEventListener("click", () => openModal(item, record));
 
             const analysisEl = renderAnalysis(record);
-            const tag = analysisEl.querySelector(".badge.output");
-            if (tag && record) {
-              tag.title += "\n\n(click to play with detection boxes)";
-              const controller = makeOverlay(video, overlay, record);
-              tag.addEventListener("click", controller.start);
-            }
+            const tag = analysisEl.querySelector(".badge.view");
+            if (tag) tag.addEventListener("click", () => openModal(item, record));
 
-            card.append(videoWrap, caption, analysisEl);
+            card.append(video, caption, analysisEl);
             grid.append(card);
             players.push(video);
           }

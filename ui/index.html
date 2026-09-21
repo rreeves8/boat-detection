@@ -55,9 +55,12 @@
         align-items: center;
         background: #b7e0c7;
         color: #15291d;
+        border: 0;
         border-radius: 6px;
         padding: 12px 18px;
         font-weight: 600;
+        font-size: 14px;
+        cursor: pointer;
         text-decoration: none;
       }
       .cta:hover {
@@ -145,7 +148,7 @@
       <header>
         <div class="eyebrow-row">
           <span class="eyebrow">Stills Bay · Lake Joseph · Ontario</span>
-          <a class="cta" href="https://login.magnusreeves.com/">Browse the footage &rarr;</a>
+          <a class="cta" href="data/">Browse the footage &rarr;</a>
         </div>
       </header>
 
@@ -161,14 +164,9 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
     <script>
       const TIMEZONE = "America/Toronto";
-      // Same-origin: served by the Cloudflare Worker in production, or by the
-      // ui/records.jsonl symlink when serving ui/ locally.
       const RECORDS_URL = "/records.jsonl";
 
       const GREEN = "#8fe6ab";
-      const AMBER = "#e6c98f";
-      const MUTED = "#6a746e";
-      const BLUE = "#7fb0e0";
 
       const tzParts = new Intl.DateTimeFormat("en-CA", {
         timeZone: TIMEZONE,
@@ -215,12 +213,10 @@
       }
 
       function aggregate(records) {
-        const perDay = new Map(); // day -> boat passes
+        const perDay = new Map(); // day -> moving objects
         const perHour = Array(24).fill(0);
-        const direction = { "L->R": 0, "R->L": 0, ambiguous: 0 };
-        const classes = { boat: 0, wake_only: 0, empty: 0 };
-        let passes = 0;
-        let boatClips = 0;
+        let movers = 0;
+        let activeClips = 0;
         let analyzed = 0;
 
         for (const record of records) {
@@ -230,16 +226,12 @@
           analyzed++;
           const { day, hour } = localParts(date);
 
-          if (record.class in classes) classes[record.class]++;
-          const boats = record.boats || [];
-          if (boats.length) boatClips++;
-
-          perDay.set(day, (perDay.get(day) || 0) + boats.length);
-          for (const boat of boats) {
-            passes++;
+          const objects = record.objects || [];
+          if (objects.length) activeClips++;
+          perDay.set(day, (perDay.get(day) || 0) + objects.length);
+          for (let i = 0; i < objects.length; i++) {
+            movers++;
             perHour[hour]++;
-            if (boat.direction in direction) direction[boat.direction]++;
-            else direction.ambiguous++;
           }
         }
 
@@ -253,10 +245,8 @@
           days,
           perDay,
           perHour,
-          direction,
-          classes,
-          passes,
-          boatClips,
+          movers,
+          activeClips,
           analyzed,
           busiest,
           dayCount: days.length,
@@ -265,7 +255,7 @@
 
       function renderStats(data) {
         const el = document.querySelector("#stats");
-        const avg = data.dayCount ? data.passes / data.dayCount : 0;
+        const avg = data.dayCount ? data.movers / data.dayCount : 0;
         const busiestLabel = data.busiest
           ? new Intl.DateTimeFormat("en-US", {
               month: "short",
@@ -274,11 +264,11 @@
             }).format(new Date(data.busiest.day + "T12:00:00Z"))
           : "—";
         const cards = [
-          [data.passes.toLocaleString(), "boat passes"],
-          [avg ? avg.toFixed(1) : "—", "avg passes / day"],
+          [data.movers.toLocaleString(), "moving objects"],
+          [avg ? avg.toFixed(1) : "—", "avg / day"],
           [
             data.busiest ? `${busiestLabel}` : "—",
-            data.busiest ? `busiest day · ${data.busiest.count} passes` : "busiest day",
+            data.busiest ? `busiest day · ${data.busiest.count}` : "busiest day",
           ],
         ];
         el.innerHTML = cards
@@ -311,8 +301,8 @@
           },
         };
 
-        // Boats per day
-        host.append(chartCard("byDay", "Boats per day", "Passes detected each day", true));
+        // Moving objects per day
+        host.append(chartCard("byDay", "Moving objects per day", "Movers detected each day", true));
         new Chart(document.getElementById("byDay"), {
           type: "bar",
           data: {
@@ -339,50 +329,6 @@
             datasets: [{ data: data.perHour, backgroundColor: GREEN, borderRadius: 3 }],
           },
           options: { ...noLegend, ...gridY, maintainAspectRatio: false },
-        });
-
-        // Direction split
-        host.append(chartCard("byDir", "Direction of travel", "Which way boats pass"));
-        new Chart(document.getElementById("byDir"), {
-          type: "doughnut",
-          data: {
-            labels: ["Left → right", "Right → left", "Ambiguous"],
-            datasets: [
-              {
-                data: [data.direction["L->R"], data.direction["R->L"], data.direction.ambiguous],
-                backgroundColor: [GREEN, BLUE, MUTED],
-                borderColor: "#171d1a",
-                borderWidth: 2,
-              },
-            ],
-          },
-          options: {
-            maintainAspectRatio: false,
-            cutout: "58%",
-            plugins: { legend: { position: "bottom" } },
-          },
-        });
-
-        // Clip class breakdown
-        host.append(chartCard("byClass", "Clip breakdown", "How much footage is real traffic"));
-        new Chart(document.getElementById("byClass"), {
-          type: "doughnut",
-          data: {
-            labels: ["Boat", "Wake only", "Empty"],
-            datasets: [
-              {
-                data: [data.classes.boat, data.classes.wake_only, data.classes.empty],
-                backgroundColor: [GREEN, AMBER, MUTED],
-                borderColor: "#171d1a",
-                borderWidth: 2,
-              },
-            ],
-          },
-          options: {
-            maintainAspectRatio: false,
-            cutout: "58%",
-            plugins: { legend: { position: "bottom" } },
-          },
         });
       }
 

@@ -8,15 +8,13 @@ built-in adaptive background model (``BackgroundSubtractorMOG2``):
      contours on it give a box around every moving blob and its position.
   3. Nearby boxes are merged (a boat and its wake become one object), then a
      light centroid tracker links boxes across frames so each mover is counted
-     once and gets a direction.
+     once and its box path is recorded.
 
 It reports *what moved and where*, never *what the object is* -- so it ignores
 the static dock chairs and shoreline houses an object detector mistakes for
 boats. Run it on one clip to watch it work::
 
     python -m counting.analyze path/to/clip.mp4 --out annotated.mp4
-
-Cross-clip counting lives in :mod:`counting.reconcile`.
 """
 
 from __future__ import annotations
@@ -55,8 +53,6 @@ MIN_TRACK_FRAMES = 6
 # Total travel span (fraction of frame diagonal) required to count as moving
 # across the frame rather than jittering in place.
 MOVE_MIN_SPAN = 0.05
-# Net horizontal travel (fraction of width) needed to call a left/right direction.
-DIRECTION_MIN_TRAVEL = 0.05
 
 
 class ClipAnalyzer:
@@ -124,9 +120,6 @@ class ClipAnalyzer:
             "moving_object": bool(objects),
             "moving_count": len(objects),
             "objects": objects,
-            # Compatibility fields consumed by reconcile.py and the UI:
-            "class": "boat" if objects else "empty",
-            "boats": objects,
             "total_frames": total_frames,
             "fps": round(fps, 2),
             "resolution": [int(size[0]), int(size[1])],
@@ -225,7 +218,6 @@ class _CentroidTracker:
 
     def _extend(self, track: dict[str, Any], det: dict[str, float]) -> None:
         track["cx"], track["cy"] = det["cx"], det["cy"]
-        track["last_x"] = det["cx"]
         track["x_min"] = min(track["x_min"], det["cx"])
         track["x_max"] = max(track["x_max"], det["cx"])
         track["y_min"] = min(track["y_min"], det["cy"])
@@ -275,7 +267,6 @@ def _near(a: tuple, b: tuple, gap: float) -> bool:
 def _new_track(det: dict[str, float], frame: int) -> dict[str, Any]:
     return {
         "cx": det["cx"], "cy": det["cy"],
-        "first_x": det["cx"], "last_x": det["cx"],
         "x_min": det["cx"], "x_max": det["cx"],
         "y_min": det["cy"], "y_max": det["cy"],
         "max_area": det["area"],
@@ -287,7 +278,7 @@ def _new_track(det: dict[str, float], frame: int) -> dict[str, Any]:
 
 
 def _moving_objects(tracks, proc_w, proc_h, diagonal) -> list[dict[str, Any]]:
-    """Keep tracks that persisted and travelled; report box, direction, path."""
+    """Keep tracks that persisted and travelled; report box + box path."""
     objects = []
     for track in tracks:
         if track["frames"] < MIN_TRACK_FRAMES:
@@ -296,13 +287,6 @@ def _moving_objects(tracks, proc_w, proc_h, diagonal) -> list[dict[str, Any]]:
         span_frac = span / diagonal
         if span_frac < MOVE_MIN_SPAN:
             continue
-        net_dx = (track["last_x"] - track["first_x"]) / max(proc_w, 1)
-        if net_dx > DIRECTION_MIN_TRAVEL:
-            direction = "L->R"
-        elif net_dx < -DIRECTION_MIN_TRAVEL:
-            direction = "R->L"
-        else:
-            direction = "ambiguous"
         x, y, w, h = track["box"]
         # Trajectory as [frame, x, y, w, h] with coords normalized 0-1, so the UI
         # can scale each box to the playing video and move it frame by frame.
@@ -313,7 +297,6 @@ def _moving_objects(tracks, proc_w, proc_h, diagonal) -> list[dict[str, Any]]:
         ]
         objects.append(
             {
-                "direction": direction,
                 "frames_visible": track["frames"],
                 "travel": round(span_frac, 3),
                 # Box in processing-resolution pixels [x, y, w, h].
@@ -339,8 +322,6 @@ def _empty_record(size, fps, total_frames) -> dict[str, Any]:
         "moving_object": False,
         "moving_count": 0,
         "objects": [],
-        "class": "empty",
-        "boats": [],
         "total_frames": total_frames,
         "fps": round(fps, 2),
         "resolution": [int(size[0]), int(size[1])],
@@ -356,7 +337,7 @@ def _main() -> None:
     record = ClipAnalyzer().analyze(args.video, annotate_path=args.out)
     print(f"moving objects: {record['moving_count']}")
     for i, obj in enumerate(record["objects"], 1):
-        print(f"  #{i} {obj['direction']:<10} box={obj['box']} "
+        print(f"  #{i} box={obj['box']} "
               f"frames={obj['frames_visible']} travel={obj['travel']}")
     if args.out:
         print(f"annotated video -> {args.out}")
